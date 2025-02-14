@@ -1,0 +1,50 @@
+[partition]
+boot = "/dev/nvme0n1p1"
+root = "/dev/nvme0n1p2"
+label = "archlinux"
+
+[network]
+reflector = true
+mirrors = []  
+
+
+[os]
+packages = [
+  "base",
+  "base-devel",
+  "linux",
+  "linux-firmware",
+  "btrfs-progs",
+  "networkmanager",
+  "vim",
+  "sudo",
+  "git",
+  "fish",
+  "intel-ucode",      
+  "grub",
+  "efibootmgr",
+  "os-prober",
+  "alacritty",
+  "rofi",
+  "cosmic-session",
+  "sddm",
+  "fcitx5-im",
+]
+enabled_services = ["NetworkManager.service", "sddm.service"]
+hostname = "archlinux"
+timezone = "Asia/Shanghai"
+locale = ["en_GB.UTF-8 UTF-8", "zh_CN.UTF-8 UTF-8"]
+lang = "en_GB.UTF-8"
+
+[user]
+root_password = "hlzwy1314"
+name = "admin"
+shell = "fish"
+
+[pacman]
+multilib = true
+archlinuxcn = true
+
+[grub]
+bootloader_id = "GRUB"
+disable_os_prober = false
