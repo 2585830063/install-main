@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 import os
 import tomllib
 from typing import Any
@@ -14,7 +12,7 @@ def main():
 def process(config: dict[str, Any]):
     check_config(config)
     enable_ntp()
-    setup_tmp_network(config)
+    setup_network(config)
     format_partition(config)
     mount_partition(config)
     setup_system(config)
@@ -40,13 +38,23 @@ def enable_ntp():
     os.system("timedatectl set-ntp true")
 
 
-def setup_tmp_network(config: dict[str, Any]):
-    if not config["network"]["reflector"]:
+def setup_network(config: dict[str, Any]):
+    # 如果 reflector 配置为 true，则使用 reflector 命令获取镜像源
+    if config["network"]["reflector"]:
+        os.system("reflector -c China -l 10 --sort rate --save /etc/pacman.d/mirrorlist")
+    else:
         os.system("systemctl stop reflector.service")
+
+    # 如果配置中提供了自定义的镜像源，则写入它们
     mirrors: list[str] = [
         f"Server = {mirror}" for mirror in config["network"]["mirrors"]
     ]
-    write_file("/etc/pacman.d/mirrorlist", multiline_str(*mirrors))
+    
+    # 如果自定义镜像列表不为空，写入镜像列表
+    if len(mirrors) != 0:
+        write_file("/etc/pacman.d/mirrorlist", multiline_str(*mirrors))
+
+
 
 
 def format_partition(config: dict[str, Any]):
@@ -58,6 +66,8 @@ def format_partition(config: dict[str, Any]):
     os.system(f"mount -t btrfs -o compress=zstd {root} /mnt")
     os.system("btrfs subvolume create /mnt/@")
     os.system("btrfs subvolume create /mnt/@home")
+    os.system("btrfs subvolume create /mnt/@var-tmp")
+    os.system("btrfs subvolume create /mnt/@var-cache")
     os.system("umount /mnt")
 
 
@@ -67,14 +77,19 @@ def mount_partition(config: dict[str, Any]):
     os.system(f"mount -t btrfs -o subvol=/@,compress=zstd {root} /mnt")
     os.system("mkdir -p /mnt/home")
     os.system(f"mount -t btrfs -o subvol=/@home,compress=zstd {root} /mnt/home")
+    os.system("mkdir -p /mnt/var/tmp")
+    os.system(f"mount -t btrfs -o subvol=/@var-tmp,compress=zstd {root} /mnt/var/tmp")
+    os.system("mkdir -p /mnt/var/cache")
+    os.system(f"mount -t btrfs -o subvol=/@var-cache,compress=zstd,nodatacow {root} /mnt/var/cache")
     os.system("mkdir -p /mnt/boot")
     os.system(f"mount {boot} /mnt/boot")
 
 
 def setup_system(config: dict[str, Any]):
+    update_keyring(config)
     setup_packages(config)
-    setup_grub(config)
     gen_fstab()
+    setup_grub(config)
     setup_timezone(config)
     setup_locale(config)
     setup_hosts(config)
@@ -84,6 +99,22 @@ def setup_system(config: dict[str, Any]):
     setup_user(config)
     enable_services(config)
 
+def update_keyring(config: dict[str, Any]):
+    # 安装 haveged 以加速密钥环的生成
+    os.system("pacman -Syu haveged --noconfirm")
+    os.system("systemctl start haveged")
+    os.system("systemctl enable haveged")
+    
+    # 删除现有的 gnupg 目录
+    os.system("rm -fr /etc/pacman.d/gnupg")
+    
+    # 初始化并更新密钥环
+    os.system("pacman-key --init")
+    os.system("pacman-key --populate archlinux")
+    
+    # 如果启用了 archlinuxcn 仓库，也需要更新其密钥
+    if config["pacman"]["archlinuxcn"]:
+        os.system("pacman-key --populate archlinuxcn")
 
 def setup_packages(config: dict[str, Any]):
     packages_: list[str] = config["os"]["packages"]
@@ -119,9 +150,19 @@ def setup_locale(config: dict[str, Any]):
     write_file("/mnt/etc/locale.conf", f"LANG={lang}")
 
 
-def setup_root():
-    print("password for root: ")
-    os.system("arch-chroot /mnt passwd root")
+def setup_root(config: dict[str, Any]):
+    # 获取配置文件中的 root 密码
+    root_password = config.get("user", {}).get("root_password", "")
+
+    if root_password:
+        # 如果配置了 root 密码，直接通过 echo 自动设置密码
+        print("Setting root password automatically...")
+        os.system(f"echo root:{root_password} | arch-chroot /mnt chpasswd")
+    else:
+        # 如果没有配置 root 密码，提示用户手动输入密码
+        print("Password for root: ")
+        os.system("arch-chroot /mnt passwd root")  # 手动输入密码，使用 `passwd` 命令
+
 
 
 def setup_user(config: dict[str, Any]):
@@ -143,16 +184,6 @@ def setup_hosts(config: dict[str, Any]):
     )
     with open("/mnt/etc/hosts", "w") as f:
         f.write(content)
-
-
-def setup_network(config: dict[str, Any]):
-    if not config["network"]["reflector"]:
-        os.system("arch-chroot /mnt systemctl stop reflector.service")
-    mirrors: list[str] = [
-        f"Server = {mirror}" for mirror in config["network"]["mirrors"]
-    ]
-    if len(mirrors) != 0:
-        write_file("/mnt/etc/pacman.d/mirrorlist", multiline_str(*mirrors))
 
 
 def setup_pacman(config: dict[str, Any]):
